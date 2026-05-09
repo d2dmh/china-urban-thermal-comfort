@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.ipynb_checkpoints/
+
+# Large generated data (can be reproduced via step1/step2)
+results/set_calculations/
+figure/daima/__pycache__/
+
+# Large figures, PPTs, and docs
+figure/*.pptx
+figure/*.docx
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Large external simulation data (26C autosize)
+GeiMingHao_26Degree/
