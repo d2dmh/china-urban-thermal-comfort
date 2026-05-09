@@ -14,11 +14,16 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # EnergyPlus 仿真结果根目录（包含三种策略子文件夹）
 SIMULATION_ROOT = r"E:\GeiMingHao_all\GeiMingHao_5.3\GeiMingHao_IndoorEnv"
 
+# 26°C 空调设定温度仿真数据（仅广/上/厦三城市）
+SIMULATION_ROOT_26C = os.path.join(PROJECT_ROOT, "GeiMingHao_26Degree", "GeiMingHao_IndoorEnv")
+
 # 三种策略对应的子文件夹
 STRATEGY_DIRS = {
     "现状": os.path.join(SIMULATION_ROOT, "Baseline_2020"),
     "扩容": os.path.join(SIMULATION_ROOT, "Capacity_expansion"),
     "定容": os.path.join(SIMULATION_ROOT, "Fixed_capacity"),
+    "扩容_26C": os.path.join(SIMULATION_ROOT_26C, "Capacity_expansion"),
+    "定容_26C": os.path.join(SIMULATION_ROOT_26C, "Fixed_capacity"),
 }
 
 # EPW 气象文件根目录（按情景子文件夹组织）
