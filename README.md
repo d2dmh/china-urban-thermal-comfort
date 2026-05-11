@@ -68,6 +68,59 @@
 
 ## 数据准备
 
+### 原型样本筛选逻辑
+
+**重要说明**：为了提高模拟效率，我们从全城居住建筑中筛选出代表性的原型样本用于热舒适模拟。
+
+#### 筛选流程
+
+1. **全城居住建筑总体（Population）**
+   - 数据来源：`data/other data/{城市}_pop_lookup_summary.xlsx` 的 `Aggregated_Source_Data` sheet
+   - 筛选条件：`usage` 字段为 `Residential_1`（低层）、`Residential_2`（中层）、`Residential_3`（高层）
+   - 广州：17,104栋
+   - 深圳：36,555栋
+
+2. **原型样本（Archetype Sample）**
+   - 从全城居住建筑总体中，按照36个典型建筑原型的定义进一步筛选
+   - 筛选条件：`LandNum`（建筑类型）、`Cluster`（聚类编号）、`Fnum_x`（楼层数）三个字段的组合
+   - 典型建筑定义来源：`data/other data/{城市}_pop_lookup_summary.xlsx` 的 `Summary` sheet
+   - 广州：11,645栋（覆盖率 68.1%）
+   - 深圳：25,449栋（覆盖率 69.6%）
+
+#### 筛选示例
+
+以广州为例，`Summary` sheet 中定义了36个典型建筑原型。其中 `Matched_Fnum` 为该原型的楼层数，可通过透视表文件验证：
+
+> **透视表参考**：`E:\GeiMingHao_all\GeiMingHao_5.3\Final_Results\不舒适小时总数_横向全面对比透视表.xlsx`  
+> 该文件包含每个典型建筑（如 `guang3zhou1shi4_0_11_1995_S0`）的逐层（STOREY 0, STOREY 1, ...）数据，从中可确认各原型的实际楼层数。
+
+| SheetName | BuildingType | Cluster | Matched_Fnum | 说明 |
+|-----------|-------------|---------|--------------|------|
+| guang3zhou1shi4_0_11_1995_S0 | 0 | 11 | 3 | 低层住宅，聚类11，3层 |
+| guang3zhou1shi4_1_2_2005_S0 | 1 | 2 | 10 | 中层住宅，聚类2，10层 |
+| guang3zhou1shi4_2_1_2015_S0 | 2 | 1 | 28 | 高层住宅，聚类1，28层 |
+
+对于每个原型，从 `Aggregated_Source_Data` 中筛选出所有满足以下条件的建筑：
+```python
+LandNum == BuildingType AND Cluster == Cluster AND Fnum_x == Matched_Fnum
+```
+
+例如，对于原型 `guang3zhou1shi4_0_11_1995_S0`，筛选出所有：
+- `LandNum = 0`（低层住宅）
+- `Cluster = 11`（聚类编号11）
+- `Fnum_x = 3`（3层建筑）
+
+的建筑作为该原型的样本。
+
+#### 样本代表性验证
+
+通过对比原型样本与全城总体的体型系数分布，验证结果显示：
+- **广州**：原型样本体型系数比全城总体高 3.3%（0.283 vs 0.274）
+- **深圳**：原型样本体型系数比全城总体高 2.1%（0.396 vs 0.388）
+- **偏差 < 5%**，样本具有良好的代表性
+
+详细分析见：`5.11/最终分析报告_原型vs总体.md`
+
 ### 项目内数据结构
 
 ```
@@ -309,6 +362,28 @@ per_capita_hours_summary.csv → results/{26,27}Degree/per_capita_hours/
 ```
 
 详细算法说明见 [algorithm.md](algorithm.md)。
+
+### 人均不舒适小时数的分母：样本人口 vs 全城总体人口
+
+**重要说明**（2026-05-11 确认）：`Hours_Per_Resident` 的分母使用**原型样本的人口**，而非全城所有居住建筑的总人口。
+
+#### 方法论选择
+
+典型建筑的 EnergyPlus 模拟结果只对其直接代表的建筑群体有效。全城居住建筑中约 **48.8%** 的人口属于未被任何典型建筑覆盖的 (LandNum, Cluster, Fnum) 组合，将这些人口纳入分母意味着假设典型建筑可以外推到未被模拟的建筑类型——该假设缺乏验证。
+
+因此，统一采用**原型样本人口**作为分母：只统计与 36 个典型建筑 (LandNum, Cluster, Fnum) 精确匹配的建筑群体的人口。
+
+#### 数据对比（广州）
+
+| 口径 | 建筑数 | 人口 | 说明 |
+|------|--------|------|------|
+| 全城居住建筑总体 | 18,077 | ~289 万 | 所有 Residential 建筑 |
+| **原型样本（分母）** | **~11,645** | **~149 万** | 精确匹配 36 个 (LandNum, Cluster, Fnum) |
+| 未覆盖部分 | ~6,432 | ~140 万 (48.8%) | 不在任何典型建筑定义内 |
+
+#### 已修复（2026-05-11）
+
+`build_population_lookup()` 已改为按 `(LandNum, Cluster, Fnum)` 三元组分组聚合人口，`process_single_excel()` 查表时同步加入 `building_type` 精确匹配。中间验证文件 `building_population_detail.csv` 可查看每栋典型建筑对应的人口。
 
 ---
 
