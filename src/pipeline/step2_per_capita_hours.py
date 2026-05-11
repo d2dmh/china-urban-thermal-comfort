@@ -83,8 +83,13 @@ def build_population_lookup(city_conf):
     merged[fnum_col] = pd.to_numeric(merged[fnum_col], errors='coerce').fillna(0).astype(int)
     merged['popNum_2'] = pd.to_numeric(merged['popNum_2'], errors='coerce').fillna(0)
 
+    group_keys = ['Cluster', fnum_col]
+    if 'LandNum' in merged.columns:
+        merged['LandNum'] = pd.to_numeric(merged['LandNum'], errors='coerce').fillna(0).astype(int)
+        group_keys = ['LandNum', 'Cluster', fnum_col]
+
     lookup = (
-        merged.groupby(['Cluster', fnum_col])['popNum_2']
+        merged.groupby(group_keys)['popNum_2']
         .sum()
         .reset_index()
         .rename(columns={fnum_col: 'Fnum', 'popNum_2': 'Total_Pop'})
@@ -101,6 +106,7 @@ def process_single_excel(excel_path, pop_lookup):
     sum_person_hours = 0.0
     sum_total_pop = 0.0
     processed = set()
+    building_details = []
 
     try:
         xls = pd.ExcelFile(excel_path, engine='openpyxl')
@@ -112,7 +118,7 @@ def process_single_excel(excel_path, pop_lookup):
         meta = parse_sheet_metadata(sheet_name)
         if meta is None:
             continue
-        _, cluster_id = meta
+        building_type, cluster_id = meta
 
         base = re.sub(r'_\d+$', '', sheet_name)
         if base in processed:
@@ -125,13 +131,25 @@ def process_single_excel(excel_path, pop_lookup):
         if fnum == 0:
             continue
 
-        match = pop_lookup[(pop_lookup['Cluster'] == cluster_id) &
-                           (pop_lookup['Fnum'] == fnum)]
+        if 'LandNum' in pop_lookup.columns:
+            match = pop_lookup[(pop_lookup['LandNum'] == building_type) &
+                               (pop_lookup['Cluster'] == cluster_id) &
+                               (pop_lookup['Fnum'] == fnum)]
+        else:
+            match = pop_lookup[(pop_lookup['Cluster'] == cluster_id) &
+                               (pop_lookup['Fnum'] == fnum)]
         if match.empty:
             continue
         total_pop = float(match['Total_Pop'].values[0])
         if total_pop <= 0:
             continue
+
+        building_details.append({
+            'building_type': building_type,
+            'cluster_id': cluster_id,
+            'fnum': fnum,
+            'total_pop': total_pop,
+        })
 
         avg_pop_per_floor = total_pop / fnum
         sum_total_pop += total_pop
@@ -142,7 +160,7 @@ def process_single_excel(excel_path, pop_lookup):
                 sum_person_hours += avg_pop_per_floor * uncomfortable_hours
 
     xls.close()
-    return sum_person_hours, sum_total_pop
+    return sum_person_hours, sum_total_pop, building_details
 
 
 # ================= 主流程 =================
@@ -162,6 +180,7 @@ def main():
         print("=" * 70)
 
         all_results = []
+        all_building_details = []
         strategies = list(get_strategy_dirs(baseline).keys())
 
         for city_conf in CITY_CONFIGS:
@@ -172,7 +191,8 @@ def main():
             pop_lookup = build_population_lookup(city_conf)
             if pop_lookup is None:
                 continue
-            print(f"   人口字典: {len(pop_lookup)} 条 (Cluster, Fnum) 组合")
+            dims = "(LandNum, Cluster, Fnum)" if 'LandNum' in pop_lookup.columns else "(Cluster, Fnum)"
+            print(f"   人口字典: {len(pop_lookup)} 条 {dims} 组合")
 
             for strategy in strategies:
                 for scenario_label in SCENARIO_ORDER:
@@ -187,7 +207,7 @@ def main():
                     res = process_single_excel(excel_path, pop_lookup)
                     if res is None:
                         continue
-                    sum_ph, sum_pop = res
+                    sum_ph, sum_pop, details = res
                     hours_per_resident = (sum_ph / sum_pop) if sum_pop > 0 else 0
 
                     city_label = pinyin.capitalize()[:-3]
@@ -205,6 +225,12 @@ def main():
                     print(f"   {strategy} | {scenario_label}  →  "
                           f"Hours/Resident = {hours_per_resident:.2f}")
 
+                    for d in details:
+                        d['城市'] = chn_name
+                        d['策略'] = strategy
+                        d['情景'] = scenario_label
+                        all_building_details.append(d)
+
         if all_results:
             out_df = pd.DataFrame(all_results)
             out_path = os.path.join(per_capita_output_dir, "per_capita_hours_summary.csv")
@@ -213,6 +239,12 @@ def main():
             out_df.to_excel(out_xlsx, index=False)
             print(f"\n>> [{baseline}°C] 已保存: {out_path}")
             print(f"   共 {len(out_df)} 行 (策略 × 城市 × 情景)")
+
+            if all_building_details:
+                detail_df = pd.DataFrame(all_building_details)
+                detail_path = os.path.join(per_capita_output_dir, "building_population_detail.csv")
+                detail_df.to_csv(detail_path, index=False, encoding='utf-8-sig')
+                print(f"   建筑人口明细: {detail_path} ({len(detail_df)} 栋典型建筑)")
         else:
             print(f"\n!! [{baseline}°C] 无结果生成。")
 
