@@ -22,9 +22,9 @@ if PROJECT_ROOT not in sys.path:
 
 from config.paths import (
     SET_OUTPUT_DIR, PER_CAPITA_OUTPUT_DIR, POPULATION_ROOT,
-    CLUSTER_MAP_ROOT, ensure_output_dirs,
+    CLUSTER_MAP_ROOT, ensure_output_dirs, get_strategy_dirs,
 )
-from config.parameters import CITY_CONFIGS, SCENARIOS, SCENARIO_ORDER
+from config.parameters import CITY_CONFIGS, SCENARIOS, SCENARIO_ORDER, TEMPERATURE_BASELINE
 from src.core.city_matcher import parse_sheet_metadata
 
 
@@ -70,7 +70,7 @@ def build_population_lookup(city_conf):
             pop_file = alt
 
     if not os.path.exists(map_file) or not os.path.exists(pop_file):
-        print(f"   ❌ {chn_name}: 基础文件缺失，跳过")
+        print(f"   [ERROR] {chn_name}: 基础文件缺失，跳过")
         return None
 
     df_cluster = _read_csv_robust(map_file)
@@ -127,10 +127,13 @@ def process_single_excel(excel_path, pop_lookup):
     processed = set()
 
     try:
-        xls = pd.ExcelFile(excel_path)
+        xls = pd.ExcelFile(excel_path, engine='openpyxl')
     except Exception as e:
-        print(f"      ❌ 打开失败 {os.path.basename(excel_path)}: {e}")
+        print(f"      [ERROR] 打开失败 {os.path.basename(excel_path)}: {e}")
         return None
+
+    # 统计不舒适小时数阈值
+    from config.parameters import SET_THRESHOLD
 
     for sheet_name in xls.sheet_names:
         meta = parse_sheet_metadata(sheet_name)
@@ -163,15 +166,11 @@ def process_single_excel(excel_path, pop_lookup):
         sum_total_pop += total_pop
 
         for col in set_cols:
-            # step1 的 SET 数据本身已是夜间筛选后的值；
-            # 这里需要数 SET>30 的小时数。但 step1 输出的是逐时 SET 值
-            # 为保持与原 5.py 兼容（其读取的 HourlyStats 矩阵已是计数），
-            # 此处直接对该列 >30 的数量求和
-            from config.parameters import SET_THRESHOLD
             uncomfortable_hours = (df[col] > SET_THRESHOLD).sum()
             if uncomfortable_hours > 0:
                 sum_person_hours += avg_pop_per_floor * uncomfortable_hours
 
+    xls.close()
     return sum_person_hours, sum_total_pop
 
 
@@ -181,16 +180,17 @@ def main():
     ensure_output_dirs()
     print("=" * 70)
     print("  Step 2: 人均不舒适小时数 (Hours/Resident)")
+    print(f"  温度基准: {TEMPERATURE_BASELINE}°C")
     print(f"  输出目录: {PER_CAPITA_OUTPUT_DIR}")
     print("=" * 70)
 
     all_results = []
-    strategies = list(__import__('config.paths', fromlist=['STRATEGY_DIRS']).STRATEGY_DIRS.keys())
+    strategies = list(get_strategy_dirs().keys())
 
     for city_conf in CITY_CONFIGS:
         chn_name = city_conf['chn_name']
         pinyin = city_conf['pinyin']
-        print(f"\n📍 {chn_name} ({pinyin})")
+        print(f"\n>> {chn_name} ({pinyin})")
 
         pop_lookup = build_population_lookup(city_conf)
         if pop_lookup is None:
@@ -235,10 +235,10 @@ def main():
         # 同时存 Excel 便于阅读
         out_xlsx = os.path.join(PER_CAPITA_OUTPUT_DIR, "per_capita_hours_summary.xlsx")
         out_df.to_excel(out_xlsx, index=False)
-        print(f"\n✅ 已保存: {out_path}")
+        print(f"\n>> 已保存: {out_path}")
         print(f"   共 {len(out_df)} 行 (策略 × 城市 × 情景)")
     else:
-        print("\n⚠️  无结果生成。")
+        print("\n!! 无结果生成。")
 
 
 if __name__ == "__main__":

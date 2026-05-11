@@ -2,6 +2,20 @@
 热舒适计算参数 + 城市/情景配置。
 """
 
+# ================= 温度基准配置 =================
+
+# 当前使用的温度基准（26 或 27）
+# 26°C：扩容策略下空调目标温度设为 26°C（更舒适但能耗更高）
+# 27°C：扩容策略下空调目标温度设为 27°C（节能推荐温度，默认）
+TEMPERATURE_BASELINE = 26  # 默认 27°C
+
+# 温度基准对应的数据子目录名
+TEMP_BASELINE_DIRS = {
+    26: "GeiMingHao_26Degree",
+    27: "GeiMingHao_27Degree",
+}
+
+
 # ================= SET 热舒适计算参数 =================
 
 # 代谢率（睡眠场景）
@@ -70,13 +84,6 @@ CITY_CONFIGS = [
         "epw_keyword": "XIAMEN",
         "custom_pop_filename": "T350200_厦门市_building_pop.csv",
     },
-    {
-        "pinyin": "ha1er3bin1shi4",
-        "chn_name": "哈尔滨市",
-        "code": "230100",
-        "prov_folder": "230000黑龙江省",
-        "epw_keyword": "HARBIN",
-    },
 ]
 
 
@@ -100,4 +107,4 @@ SCENARIO_ORDER = list(SCENARIOS.keys())
 # ================= 多进程配置 =================
 
 # 并行进程数（受 Numba/pythermalcomfort 内存影响，建议 2-4）
-MAX_WORKERS = 3
+MAX_WORKERS = 4

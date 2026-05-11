@@ -30,11 +30,11 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from config.paths import (
-    STRATEGY_DIRS, EPW_ROOT, SET_OUTPUT_DIR, ensure_output_dirs,
+    get_strategy_dirs, EPW_ROOT, SET_OUTPUT_DIR, ensure_output_dirs,
 )
 from config.parameters import (
     MET, CLO, AIR_VELOCITY, RH_LIMIT, SET_THRESHOLD,
-    NIGHT_HOURS, CITY_CONFIGS, SCENARIOS, MAX_WORKERS,
+    NIGHT_HOURS, CITY_CONFIGS, SCENARIOS, MAX_WORKERS, TEMPERATURE_BASELINE,
 )
 from src.core.epw_handler import (
     extract_epw_pressure, get_epw_start_offset, find_epw_file,
@@ -172,9 +172,12 @@ def build_task_list():
     tasks = []
     epw_cache = {}
 
-    for strategy_zh, strategy_dir in STRATEGY_DIRS.items():
+    # 获取当前温度基准对应的策略目录
+    strategy_dirs = get_strategy_dirs()
+
+    for strategy_zh, strategy_dir in strategy_dirs.items():
         if not os.path.isdir(strategy_dir):
-            print(f"⚠️  策略目录不存在: {strategy_dir}")
+            print(f"!! 策略目录不存在: {strategy_dir}")
             continue
 
         for city_folder in os.listdir(strategy_dir):
@@ -237,18 +240,19 @@ def main():
     ensure_output_dirs()
     print("=" * 70)
     print("  Step 1: SET 计算 + 夜间过热统计")
+    print(f"  温度基准: {TEMPERATURE_BASELINE}°C")
     print(f"  输出目录: {SET_OUTPUT_DIR}")
     print("=" * 70)
 
-    print("🔥 主进程预热 Numba 缓存...")
+    print(">> 主进程预热 Numba 缓存...")
     warm_up_numba()
-    print("✅ 预热完成。")
+    print(">> 预热完成。")
 
-    print("📋 扫描任务列表...")
+    print(">> 扫描任务列表...")
     tasks = build_task_list()
     print(f"   共发现 {len(tasks)} 个建筑文件待处理")
     if not tasks:
-        print("⚠️  没有任务可执行，退出。")
+        print("!! 没有任务可执行，退出。")
         return
 
     # 按 (策略, 城市, 情景) 分组，每组一个 Excel
@@ -256,7 +260,7 @@ def main():
     all_summary = []
     safe_workers = min(MAX_WORKERS, os.cpu_count() or 2)
 
-    print(f"🚀 启动 {safe_workers} 个并行进程...")
+    print(f">> 启动 {safe_workers} 个并行进程...")
     start = time.time()
 
     with ProcessPoolExecutor(max_workers=safe_workers) as executor:
@@ -277,7 +281,7 @@ def main():
                 print(f"   进度: {done}/{len(tasks)}  耗时 {time.time()-start:.1f}s")
 
     # 写出 Excel
-    print("\n📝 写入逐时 SET Excel 文件...")
+    print("\n>> 写入逐时 SET Excel 文件...")
     for (strategy, city, scenario_label), buildings in excel_buffers.items():
         out_dir = os.path.join(SET_OUTPUT_DIR, strategy, city)
         os.makedirs(out_dir, exist_ok=True)
@@ -290,18 +294,18 @@ def main():
                     sheet_name = get_unique_sheet_name(used, building_id)
                     used.add(sheet_name)
                     df.to_excel(writer, sheet_name=sheet_name, index=False)
-            print(f"   ✅ {excel_path}  ({len(buildings)} sheets)")
+            print(f"   [OK] {excel_path}  ({len(buildings)} sheets)")
         except Exception as e:
-            print(f"   ❌ 写入失败 {excel_path}: {e}")
+            print(f"   [ERROR] 写入失败 {excel_path}: {e}")
 
     # 写出总 summary
     if all_summary:
         summary_df = pd.DataFrame(all_summary)
         summary_path = os.path.join(SET_OUTPUT_DIR, "summary_uncomfortable_hours.csv")
         summary_df.to_csv(summary_path, index=False, encoding='utf-8-sig')
-        print(f"\n📊 总汇总表: {summary_path}  ({len(summary_df)} 行)")
+        print(f"\n>> 总汇总表: {summary_path}  ({len(summary_df)} 行)")
 
-    print(f"\n✅ Step 1 完成。总耗时 {time.time()-start:.1f}s")
+    print(f"\n>> Step 1 完成。总耗时 {time.time()-start:.1f}s")
 
 
 if __name__ == "__main__":

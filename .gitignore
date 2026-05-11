@@ -22,3 +22,7 @@ Thumbs.db
 
 # Large external simulation data (26C autosize)
 GeiMingHao_26Degree/
+
+# Data directory (large, except README)
+data/*
+!data/README.md
