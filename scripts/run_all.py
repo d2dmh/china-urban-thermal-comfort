@@ -1,5 +1,5 @@
 """
-一键运行：依次执行 step1 → step2。
+一键运行：依次执行 step1 → step2 → step3。
 画图请打开 notebooks/ 下的 .ipynb 文件交互式运行。
 """
 
@@ -24,6 +24,12 @@ def main():
     print("=" * 70)
     from src.pipeline.step2_per_capita_hours import main as step2_main
     step2_main()
+
+    print("\n" + "=" * 70)
+    print("  执行 Step 3: 透视表")
+    print("=" * 70)
+    from src.pipeline.step3_pivot_tables import main as step3_main
+    step3_main()
 
     print("\n>> 全部流程完成！")
     print("   下一步：打开 notebooks/01_per_capita_grouped_bar.ipynb 画图")

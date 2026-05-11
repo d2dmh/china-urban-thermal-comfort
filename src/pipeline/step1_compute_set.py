@@ -30,11 +30,11 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from config.paths import (
-    get_strategy_dirs, EPW_ROOT, SET_OUTPUT_DIR, ensure_output_dirs,
+    get_strategy_dirs, EPW_ROOT, get_set_output_dir, ensure_output_dirs,
 )
 from config.parameters import (
     MET, CLO, AIR_VELOCITY, RH_LIMIT, SET_THRESHOLD,
-    NIGHT_HOURS, CITY_CONFIGS, SCENARIOS, MAX_WORKERS, TEMPERATURE_BASELINE,
+    NIGHT_HOURS, CITY_CONFIGS, SCENARIOS, MAX_WORKERS, BASELINES,
 )
 from src.core.epw_handler import (
     extract_epw_pressure, get_epw_start_offset, find_epw_file,
@@ -55,7 +55,7 @@ def process_single_building(args):
     hourly_dataframe: DataFrame，逐时 SET/RH 大表
     sheet_base_name: 写入 Excel 时使用的 sheet 基础名
     """
-    csv_file, strategy, city_pinyin, scenario_label, scenario_keyword, epw_pressure = args
+    csv_file, strategy, city_pinyin, scenario_label, scenario_keyword, epw_pressure, baseline = args
 
     try:
         # 读取 CSV（兼容 utf-8 / gbk）
@@ -141,6 +141,7 @@ def process_single_building(args):
             # 统计该楼层的夜间不舒适小时数
             uncomfortable_hours = int(np.nansum(set_vals > SET_THRESHOLD))
             summary_rows.append({
+                '温度基准': f"{baseline}°C",
                 '策略': strategy,
                 '城市': city_pinyin,
                 '情景': scenario_label,
@@ -162,18 +163,17 @@ def process_single_building(args):
 
 # ================= 主流程 =================
 
-def build_task_list():
+def build_task_list(baseline):
     """
     扫描三策略目录，构建 (csv_file, strategy, city_pinyin, scenario_label,
-    scenario_keyword, epw_pressure) 任务列表。
+    scenario_keyword, epw_pressure, baseline) 任务列表。
 
     EPW 大气压数据按 (city, scenario) 缓存复用。
     """
     tasks = []
     epw_cache = {}
 
-    # 获取当前温度基准对应的策略目录
-    strategy_dirs = get_strategy_dirs()
+    strategy_dirs = get_strategy_dirs(baseline)
 
     for strategy_zh, strategy_dir in strategy_dirs.items():
         if not os.path.isdir(strategy_dir):
@@ -185,7 +185,6 @@ def build_task_list():
             if not os.path.isdir(city_path):
                 continue
 
-            # 找到该城市的配置项以便取 epw_keyword
             city_conf = next(
                 (c for c in CITY_CONFIGS if c['pinyin'] == city_folder),
                 None
@@ -198,7 +197,6 @@ def build_task_list():
                 if not os.path.isdir(scenario_path):
                     continue
 
-                # 匹配该子文件夹对应的情景标签
                 scenario_label = None
                 scenario_keyword = None
                 for label, keyword in SCENARIOS.items():
@@ -209,7 +207,6 @@ def build_task_list():
                 if scenario_label is None:
                     continue
 
-                # 加载 EPW 大气压（按城市+情景缓存）
                 cache_key = (city_folder, scenario_keyword)
                 if cache_key not in epw_cache:
                     epw_file = find_epw_file(EPW_ROOT, scenario_keyword,
@@ -220,7 +217,6 @@ def build_task_list():
                     )
                 pressure = epw_cache[cache_key]
 
-                # 收集 CSV 文件（排除 _SET_Result 和 _dup 副本）
                 csv_files = glob.glob(os.path.join(scenario_path, "*.csv"))
                 csv_files = [
                     f for f in csv_files
@@ -230,7 +226,7 @@ def build_task_list():
                 for csv_file in csv_files:
                     tasks.append((
                         csv_file, strategy_zh, city_folder,
-                        scenario_label, scenario_keyword, pressure
+                        scenario_label, scenario_keyword, pressure, baseline
                     ))
 
     return tasks
@@ -238,74 +234,78 @@ def build_task_list():
 
 def main():
     ensure_output_dirs()
-    print("=" * 70)
-    print("  Step 1: SET 计算 + 夜间过热统计")
-    print(f"  温度基准: {TEMPERATURE_BASELINE}°C")
-    print(f"  输出目录: {SET_OUTPUT_DIR}")
-    print("=" * 70)
-
+    # Numba 预热（只需一次）
     print(">> 主进程预热 Numba 缓存...")
     warm_up_numba()
     print(">> 预热完成。")
 
-    print(">> 扫描任务列表...")
-    tasks = build_task_list()
-    print(f"   共发现 {len(tasks)} 个建筑文件待处理")
-    if not tasks:
-        print("!! 没有任务可执行，退出。")
-        return
+    for baseline in BASELINES:
+        set_output_dir = get_set_output_dir(baseline)
+        os.makedirs(set_output_dir, exist_ok=True)
 
-    # 按 (策略, 城市, 情景) 分组，每组一个 Excel
-    excel_buffers = {}
-    all_summary = []
-    safe_workers = min(MAX_WORKERS, os.cpu_count() or 2)
+        print("\n" + "=" * 70)
+        print(f"  Step 1: SET 计算 + 夜间过热统计 [{baseline}°C]")
+        print(f"  输出目录: {set_output_dir}")
+        print("=" * 70)
 
-    print(f">> 启动 {safe_workers} 个并行进程...")
-    start = time.time()
+        print(">> 扫描任务列表...")
+        tasks = build_task_list(baseline)
+        print(f"   共发现 {len(tasks)} 个建筑文件待处理")
+        if not tasks:
+            print("!! 没有任务可执行，跳过。")
+            continue
 
-    with ProcessPoolExecutor(max_workers=safe_workers) as executor:
-        futures = {executor.submit(process_single_building, t): t for t in tasks}
-        done = 0
-        for future in as_completed(futures):
-            done += 1
-            summary_rows, out_df, building_id = future.result()
-            if summary_rows is None:
-                continue
-            task = futures[future]
-            _, strategy, city, scenario_label, _, _ = task
-            group_key = (strategy, city, scenario_label)
-            excel_buffers.setdefault(group_key, []).append((building_id, out_df))
-            all_summary.extend(summary_rows)
+        # 按 (baseline, 策略, 城市, 情景) 分组，每组一个 Excel
+        excel_buffers = {}
+        all_summary = []
+        safe_workers = min(MAX_WORKERS, os.cpu_count() or 2)
 
-            if done % 20 == 0 or done == len(tasks):
-                print(f"   进度: {done}/{len(tasks)}  耗时 {time.time()-start:.1f}s")
+        print(f">> 启动 {safe_workers} 个并行进程...")
+        start = time.time()
 
-    # 写出 Excel
-    print("\n>> 写入逐时 SET Excel 文件...")
-    for (strategy, city, scenario_label), buildings in excel_buffers.items():
-        out_dir = os.path.join(SET_OUTPUT_DIR, strategy, city)
-        os.makedirs(out_dir, exist_ok=True)
-        safe_label = scenario_label.replace(" ", "_")
-        excel_path = os.path.join(out_dir, f"{city}_{safe_label}_SET.xlsx")
-        try:
-            with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
-                used = set()
-                for building_id, df in buildings:
-                    sheet_name = get_unique_sheet_name(used, building_id)
-                    used.add(sheet_name)
-                    df.to_excel(writer, sheet_name=sheet_name, index=False)
-            print(f"   [OK] {excel_path}  ({len(buildings)} sheets)")
-        except Exception as e:
-            print(f"   [ERROR] 写入失败 {excel_path}: {e}")
+        with ProcessPoolExecutor(max_workers=safe_workers) as executor:
+            futures = {executor.submit(process_single_building, t): t for t in tasks}
+            done = 0
+            for future in as_completed(futures):
+                done += 1
+                summary_rows, out_df, building_id = future.result()
+                if summary_rows is None:
+                    continue
+                task = futures[future]
+                _, strategy, city, scenario_label, _, _, _ = task
+                group_key = (strategy, city, scenario_label)
+                excel_buffers.setdefault(group_key, []).append((building_id, out_df))
+                all_summary.extend(summary_rows)
 
-    # 写出总 summary
-    if all_summary:
-        summary_df = pd.DataFrame(all_summary)
-        summary_path = os.path.join(SET_OUTPUT_DIR, "summary_uncomfortable_hours.csv")
-        summary_df.to_csv(summary_path, index=False, encoding='utf-8-sig')
-        print(f"\n>> 总汇总表: {summary_path}  ({len(summary_df)} 行)")
+                if done % 20 == 0 or done == len(tasks):
+                    print(f"   进度: {done}/{len(tasks)}  耗时 {time.time()-start:.1f}s")
 
-    print(f"\n>> Step 1 完成。总耗时 {time.time()-start:.1f}s")
+        # 写出 Excel
+        print("\n>> 写入逐时 SET Excel 文件...")
+        for (strategy, city, scenario_label), buildings in excel_buffers.items():
+            out_dir = os.path.join(set_output_dir, strategy, city)
+            os.makedirs(out_dir, exist_ok=True)
+            safe_label = scenario_label.replace(" ", "_")
+            excel_path = os.path.join(out_dir, f"{city}_{safe_label}_SET.xlsx")
+            try:
+                with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
+                    used = set()
+                    for building_id, df in buildings:
+                        sheet_name = get_unique_sheet_name(used, building_id)
+                        used.add(sheet_name)
+                        df.to_excel(writer, sheet_name=sheet_name, index=False)
+                print(f"   [OK] {excel_path}  ({len(buildings)} sheets)")
+            except Exception as e:
+                print(f"   [ERROR] 写入失败 {excel_path}: {e}")
+
+        # 写出总 summary
+        if all_summary:
+            summary_df = pd.DataFrame(all_summary)
+            summary_path = os.path.join(set_output_dir, "summary_uncomfortable_hours.csv")
+            summary_df.to_csv(summary_path, index=False, encoding='utf-8-sig')
+            print(f"\n>> 总汇总表: {summary_path}  ({len(summary_df)} 行)")
+
+        print(f"\n>> Step 1 [{baseline}°C] 完成。总耗时 {time.time()-start:.1f}s")
 
 
 if __name__ == "__main__":

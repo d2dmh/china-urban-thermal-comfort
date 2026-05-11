@@ -43,7 +43,7 @@ data/
 | **27°C** | 扩容策略下空调目标温度 27°C（默认） | 6 城市 |
 | **26°C** | 扩容策略下空调目标温度 26°C | 3 城市（广州、上海、厦门） |
 
-切换方式：修改 `config/parameters.py` 中的 `TEMPERATURE_BASELINE`。
+处理方式：`config/parameters.py` 中 `BASELINES = [26, 27]`，一次运行自动处理两个温度基准。
 
 ## EPW 文件
 

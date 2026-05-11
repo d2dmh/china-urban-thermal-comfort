@@ -65,20 +65,16 @@ CLUSTER_MAP_ROOT_OLD = r"E:\映射"
 
 # ================= 动态路径构建（支持温度基准切换）=================
 
-def get_simulation_root(temp_baseline=None):
+def get_simulation_root(temp_baseline):
     """
     根据温度基准获取仿真数据根目录。
 
     Args:
-        temp_baseline: 温度基准（26 或 27），None 则使用 parameters.TEMPERATURE_BASELINE
+        temp_baseline: 温度基准（26 或 27）
 
     Returns:
         仿真数据根目录路径
     """
-    if temp_baseline is None:
-        from config.parameters import TEMPERATURE_BASELINE
-        temp_baseline = TEMPERATURE_BASELINE
-
     from config.parameters import TEMP_BASELINE_DIRS
     baseline_dir = TEMP_BASELINE_DIRS.get(temp_baseline, "GeiMingHao_27Degree")
 
@@ -95,12 +91,12 @@ def get_simulation_root(temp_baseline=None):
         return new_path
 
 
-def get_strategy_dirs(temp_baseline=None):
+def get_strategy_dirs(temp_baseline):
     """
     获取三种策略对应的子文件夹。
 
     Args:
-        temp_baseline: 温度基准（26 或 27），None 则使用 parameters.TEMPERATURE_BASELINE
+        temp_baseline: 温度基准（26 或 27）
 
     Returns:
         策略名 → 策略目录路径的字典
@@ -115,10 +111,6 @@ def get_strategy_dirs(temp_baseline=None):
 
 # ================= 导出的路径变量 =================
 
-# 默认使用配置的温度基准
-SIMULATION_ROOT = get_simulation_root()
-STRATEGY_DIRS = get_strategy_dirs()
-
 # EPW 气象文件根目录
 EPW_ROOT_NEW = os.path.join(INPUT_DATA_ROOT, "epw_files")
 EPW_ROOT = get_data_path(EPW_ROOT_NEW, EPW_ROOT_OLD, "directory")
@@ -132,21 +124,38 @@ CLUSTER_MAP_ROOT_NEW = os.path.join(OTHER_DATA_ROOT, "映射")
 CLUSTER_MAP_ROOT = get_data_path(CLUSTER_MAP_ROOT_NEW, CLUSTER_MAP_ROOT_OLD, "directory")
 
 
-# ================= 输出路径（项目内部）=================
+# ================= 输出路径（项目内部，按温度基准分目录）=================
 
 RESULTS_ROOT = os.path.join(PROJECT_ROOT, "results")
 
-# Step 1 输出：SET 计算结果 + 夜间过热统计
-SET_OUTPUT_DIR = os.path.join(RESULTS_ROOT, "set_calculations")
 
-# Step 2 输出：人均不舒适小时数汇总表
-PER_CAPITA_OUTPUT_DIR = os.path.join(RESULTS_ROOT, "per_capita_hours")
-
-# 图表输出目录
-FIGURES_DIR = os.path.join(RESULTS_ROOT, "figures")
+def get_set_output_dir(baseline):
+    """Step 1 输出：SET 计算结果 + 夜间过热统计"""
+    return os.path.join(RESULTS_ROOT, f"{baseline}Degree", "set_calculations")
 
 
-def ensure_output_dirs():
+def get_per_capita_output_dir(baseline):
+    """Step 2 输出：人均不舒适小时数汇总表"""
+    return os.path.join(RESULTS_ROOT, f"{baseline}Degree", "per_capita_hours")
+
+
+def get_pivot_output_dir(baseline):
+    """Step 3 输出：透视表"""
+    return os.path.join(RESULTS_ROOT, f"{baseline}Degree", "pivot_tables")
+
+
+def get_figures_dir(baseline=None):
+    """图表输出目录"""
+    if baseline:
+        return os.path.join(RESULTS_ROOT, "figures", f"{baseline}Degree")
+    return os.path.join(RESULTS_ROOT, "figures")
+
+
+def ensure_output_dirs(baseline=None):
     """确保所有输出目录存在"""
-    for d in [SET_OUTPUT_DIR, PER_CAPITA_OUTPUT_DIR, FIGURES_DIR]:
-        os.makedirs(d, exist_ok=True)
+    baselines = [baseline] if baseline else [26, 27]
+    for b in baselines:
+        for d in [get_set_output_dir(b), get_per_capita_output_dir(b),
+                  get_pivot_output_dir(b)]:
+            os.makedirs(d, exist_ok=True)
+    os.makedirs(get_figures_dir(), exist_ok=True)
